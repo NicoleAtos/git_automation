@@ -1,0 +1,50 @@
+# azure-pipelines.yml
+
+trigger: none    # disable CI on push
+pr:
+  branches:
+    include:
+      - '*'      # run pipeline for any PR target branch
+
+variables:
+  DATABRICKS_HOST: https://adb-1125325969407915.15.azuredatabricks.net/
+  DATABRICKS_TOKEN: dapib45e921b8202970595f578bde1249982-2
+  JOB_ID: 136313178808845
+
+stages:
+- stage: TriggerDatabricks
+  displayName: Trigger Databricks Job
+  jobs:
+  - job: InvokeJob
+    displayName: Invoke Databricks Job
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    # 1) Check out the PR branch
+    - checkout: self
+      persistCredentials: true
+      clean: false
+
+    - bash: |
+        # 2) Fetch master & diff to extract changed files
+        CHANGED=$(git fetch origin master && git diff --name-only origin/master HEAD | paste -sd "," -)
+        echo "Changed files: $CHANGED"
+
+        # 3) Extract branch name from the variable, checkout job in Databricks for the given branch
+        BRANCH_NAME=${BUILD_SOURCEBRANCH#refs/heads/}
+        echo "Triggering Databricks Job #${JOB_ID} for branch: ${BRANCH_NAME}"
+
+        # call the Databricks REST API
+        curl -sS -X POST "${DATABRICKS_HOST}/api/2.2/jobs/run-now" \
+        -H "Authorization: Bearer ${DATABRICKS_TOKEN}" \
+        -H "Content-Type: application/json" \
+        --data '{"job_id": '"${JOB_ID}"', "notebook_params": {"source_branch": "'"${BRANCH}"'", "changed_files": "'"${CHANGED}"'"}}'
+
+      displayName: 'Trigger Databricks Job via REST API'
+      env:
+        DATABRICKS_HOST: $(DATABRICKS_HOST)
+        DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
+
+    - bash: |
+        echo "Databricks job triggered successfully."
+      displayName: 'Done'

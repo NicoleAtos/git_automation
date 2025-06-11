@@ -1,0 +1,60 @@
+trigger:
+  branches:
+    include:
+      - master
+
+parameters:
+  - name: environments
+    type: object
+
+stages:
+  - stage: DeployDatabricksJobs
+    displayName: Deploy Databricks Jobs to selected environments
+    jobs:
+      - ${{ each env in parameters.environments }}:
+        - job: Deploy_${{ env }}
+          displayName: Deploy to ${{ env }}
+          variables:
+            - name: environment
+              value: ${{ env }}
+            - name: azureSubscription
+              ${{ if eq(env, 'prd') }}:
+                value: 'DatabricksDevOpsConnection_P'
+              ${{ else }}:
+                value: 'DatabricksDevOpsConnection_NP'
+          steps:
+
+            # 1. Validate selected environments
+            - task: Bash@3
+              displayName: 'Validate selected environments'
+              inputs:
+                targetType: 'inline'
+                script: |
+                  allowed_envs="dev qas prd"
+                  if [[ ! " $allowed_envs " =~ " ${{ env }} " ]]; then
+                    echo "ERROR: Invalid environment '${{ env }}'. Allowed values: $allowed_envs"
+                    exit 1
+                  fi
+
+            # 2. Retrieve KeyVault Secrets (with whitelisting template)
+            - template: keyvault-access-template.yml
+              parameters:
+                azureSubscription: ${{ variables.azureSubscription }}
+                keyVaultName: ${{ format('keyVault-elsa-{0}', env) }}
+                resourceGroupName: ${{ format('rg-elsa-{0}', env) }}
+                secretsFilter: 'databricks-dev-ops-tenant-id,databricks-dev-ops-client-id,databricks-dev-ops-client-secret,databricks-dev-ops-subscription-id'
+
+            # 3. Generate Tokens for Service Principal
+            - task: Bash@3
+              displayName: 'Generate Tokens for Service Principal'
+              inputs:
+                filePath: '$(Build.SourcesDirectory)/pipelines/scripts/generate-tokens.sh'
+                arguments: '$(databricks-dev-ops-tenant-id) $(databricks-dev-ops-client-id) $(databricks-dev-ops-client-secret) $(databricks-dev-ops-subscription-id) $(environment)'
+
+            # 4. Upload jobs from /jobs folder to Databricks workspace
+            - task: Bash@3
+              displayName: 'Deploy Databricks Jobs from JSON files'
+              inputs:
+                filePath: '$(Build.SourcesDirectory)/pipelines/scripts/deploy-jobs.sh'
+                workingDirectory: '$(Build.SourcesDirectory)/jobs'
+                arguments: '$(accessToken) $(workspaceUrl)'
