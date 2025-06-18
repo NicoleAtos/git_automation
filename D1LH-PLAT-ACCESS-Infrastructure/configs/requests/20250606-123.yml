@@ -30,4 +30,4 @@ principal:
   name:
     - mvlzf@bayer.com
     - mvpud@bayer.com
-privilege: SELECT
+privilege: INSERT
