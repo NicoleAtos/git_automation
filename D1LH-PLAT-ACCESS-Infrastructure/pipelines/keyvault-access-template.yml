@@ -1,0 +1,40 @@
+parameters:
+  - name: azureSubscription
+    type: string
+  - name: keyVaultName
+    type: string
+  - name: resourceGroupName
+    type: string
+  - name: secretsFilter
+    type: string
+
+steps:
+  - task: AzureCLI@2
+    displayName: "Whitelisting Azure DevOps Build Agent IP"
+    inputs:
+      azureSubscription: ${{ parameters.azureSubscription }}
+      scriptType: 'pscore'
+      scriptLocation: 'inlineScript'
+      workingDirectory: '$(Pipeline.Workspace)'
+      inlineScript: |
+        $pip_value = Invoke-RestMethod https://ipinfo.io/json | Select -exp ip
+        az keyvault network-rule add --name ${{ parameters.keyVaultName }} --ip-address $pip_value --resource-group ${{ parameters.resourceGroupName }}
+        az keyvault network-rule wait --name ${{ parameters.keyVaultName }} --resource-group ${{ parameters.resourceGroupName }} --updated
+
+  - task: AzureKeyVault@2
+    displayName: "Download KeyVault Secrets"
+    inputs:
+      azureSubscription: ${{ parameters.azureSubscription }}
+      KeyVaultName: ${{ parameters.keyVaultName }}
+      SecretsFilter: ${{ parameters.secretsFilter }}
+      RunAsPreJob: false
+
+  - task: AzureCLI@2
+    displayName: "Removing Azure DevOps Build Agent Whitelisted IP"
+    inputs:
+      azureSubscription: ${{ parameters.azureSubscription }}
+      scriptType: 'pscore'
+      scriptLocation: 'inlineScript'
+      inlineScript: |
+        $pip_value = Invoke-RestMethod https://ipinfo.io/json | Select -exp ip
+        az keyvault network-rule remove --name ${{ parameters.keyVaultName }} --ip-address $pip_value --resource-group ${{ parameters.resourceGroupName }}

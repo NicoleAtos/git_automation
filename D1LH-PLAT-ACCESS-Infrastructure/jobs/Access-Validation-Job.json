@@ -1,0 +1,47 @@
+{
+  "name": "Access-Validation-Job",
+  "timeout_seconds": 3600,
+  "max_concurrent_runs": 99,
+  "git_source": {
+    "git_url": "https://github.com/bayer-int/D1LH-PLAT-ACCESS-Infrastructure.git",
+    "git_provider": "gitHub",
+    "git_branch": "feature/jobs"
+  },
+  "tasks": [
+    {
+      "task_key": "Access-Validation-Task",
+      "notebook_task": {
+        "notebook_path": "notebooks/grants_generator",
+        "base_parameters": {
+          "mode": "validate"
+        },
+        "source": "GIT"
+      },
+      "job_cluster_key": "Job-Cluster"
+    }
+  ],
+  "job_clusters": [
+    {
+        "job_cluster_key": "Job-Cluster",
+        "new_cluster": {
+            "num_workers": 0,
+            "spark_version": "15.4.x-scala2.12",
+            "node_type_id": "Standard_E4ds_v4",
+            "spark_conf": {
+                "spark.master": "local[*, 4]",
+                "spark.databricks.cluster.profile": "singleNode"
+            },
+            "azure_attributes": {
+                "availability": "ON_DEMAND_AZURE"
+            },
+            "custom_tags": {
+                "ResourceClass": "SingleNode",
+                "data-classification": "restricted",
+                "ClusterCostWorkspace":"dbw-elsa-central",
+                "ClusterCostType": "Job",
+                "JobName": "Access-Validation-Job"
+            }
+        }
+    }
+]
+}

@@ -1,0 +1,33 @@
+#---------------------------------------------
+created_at: 2025-06-06T13:25:00Z
+created_by: ehkty@bayer.com
+system: databricks
+environment:
+- dev
+- qas
+- prd
+---
+
+id: 1
+object:
+  type: VIEW
+  name:
+    - testdr.student_view
+    - testdr.student_view001
+principal:
+  type: user
+  name: EDA-DLDB-{env}-AR-OPERATOR
+privilege: SELECT
+expiry: 2025-12-31T23:59:59Z
+---
+
+id: 2
+object:
+  type: SCHEMA
+  name: testdr
+principal:
+  type: user
+  name:
+    - mvlzf@bayer.com
+    - mvpud@bayer.com
+privilege: SELECT
