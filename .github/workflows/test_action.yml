@@ -10,6 +10,7 @@ on:
 
 jobs:
   validate-yaml:
+    name: yaml_schema_validation
     runs-on: ubuntu-latest
 
     steps:
