@@ -2,14 +2,36 @@
 import yaml
 import sys, os
 from pathlib import Path
+from datetime import datetime
+from delta.tables import DeltaTable
 from concurrent.futures import ThreadPoolExecutor
 from global_lib.global_utils.logging import *
-from global_lib.global_utils.helpers import *
+# from global_lib.global_utils.helpers import *
+from pyspark.sql.types import StructType, StructField, TimestampType, StringType, BooleanType, IntegerType
 
 # COMMAND ----------
 
 dbutils.widgets.text("Files", "")
 dbutils.widgets.text("Mode", "")  # test/apply
+
+# COMMAND ----------
+
+catalog = ""
+schema = ""
+table = ""
+
+expiration_schema = StructType([
+    StructField("id", IntegerType(), True),
+    StructField("system", StringType(), True),
+    StructField("environment", StringType(), True),
+    StructField("object_type", StringType(), True),
+    StructField("object_name", StringType(), True),
+    StructField("principal_type", StringType(), True),
+    StructField("principal_name", StringType(), True),
+    StructField("privilege", StringType(), True),
+    StructField("expiry", TimestampType(), True),
+    StructField("marked_for_deletion", TimestampType(), True)
+])
 
 # COMMAND ----------
 
@@ -79,11 +101,15 @@ class GrantManager:
                         print(f"{item['id']} {action}: {privilege} ON {object_type} {object_name} TO {principal}")
                         # self.logger.log(f"{item['id']} {action}: {privilege} ON {object_type} {object_name} TO {principal}")
                     yield {
+                        'id': item['id'],
+                        'system': item['system'],
+                        'environment': self.env,
                         'object_type': object_type,
                         'object_name': object_name,
                         'privilege': privilege,
                         'principal': principal.format(env=self.env[0].upper()),
-                        'action': action
+                        'action': action,
+                        'expiry': item.get('expiry', None)
                     }
 
     def load_config_yaml(self, paths: list[str]) -> list[dict]:
@@ -178,7 +204,11 @@ class GrantManager:
         """
         Main lifecycle logic: applies GRANT, REVOKE or REVOKE_ALL actions.
         """
+        id = args['id']
+        env = args['environment']
+        system = args['system']
         action = args.get('action', '')
+        expiry = args['expiry']
         object_type = args['object_type']
         object_name = args['object_name']
         principal = args['principal']
@@ -194,6 +224,21 @@ class GrantManager:
                 revoke_statement = self.generate_access_statement(privilege, object_type, object_name, principal, revoke=True)
                 self.execute_statemet(revoke_statement)
                 self.grant_validator(privilege, object_type, object_name, principal, expectation=0)
+            else:
+                # add record to the table with some flag "marked for deletion" on false + expiry date
+                df = spark.createDataFrame([{
+                    "id": id,
+                    "system": system,
+                    "environment": env,
+                    "object_type": object_type,
+                    "object_name": object_name,
+                    "privilege": privilege,
+                    "principal": principal,
+                    "action": action,
+                    "expiry": datetime.strptime(expiry, "%Y-%m-%dT%H:%M:%SZ") if expiry else None,
+                    "marked_for_deletion": False
+                }], schema=expiration_schema)
+                df.write.format("delta").mode("append").saveAsTable(f"{catalog}.{schema}.{table}")
 
         elif action == 'REVOKE':
             revoke_statement = self.generate_access_statement(privilege, object_type, object_name, principal, revoke=True)
@@ -205,6 +250,12 @@ class GrantManager:
                 grant_statement = self.generate_access_statement(privilege, object_type, object_name, principal)
                 self.execute_statemet(grant_statement)
                 self.grant_validator(privilege, object_type, object_name, principal, expectation=1)
+            else:
+                # search record change the "marked for deletion" flag to true (filter by privilege and user)
+                expiration_table = DeltaTable.forName(f"{catalog}.{schema}.{table}")
+                expiration_table.update(
+                    condition=f"privilege = '{privilege}' AND principal = '{principal}'",
+                    set={"marked_for_deletion": True})
 
         elif action == 'REVOKE_ALL':
             print("Starting REVOKE_ALL testing flow...")
@@ -229,6 +280,13 @@ class GrantManager:
                 print("Re-granting all revoked privileges (test teardown)...")
                 # self.logger.log("Re-granting all revoked privileges (test teardown)...")
                 self.regrant_privileges(revoked_privileges, object_type, object_name, principal)
+            else:
+                # search and change the "marked for deletion" flag to true for the specific privilege(filter on privilege and user)
+                for privilege in revoked_privileges:
+                    expiration_table = DeltaTable.forName(f"{catalog}.{schema}.{table}")
+                    expiration_table.update(
+                        condition=f"privilege = '{privilege}' AND principal = '{principal}'",
+                        set={"marked_for_deletion": True})
 
     def files_handling(self, files_string):
         """
